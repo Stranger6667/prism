@@ -22371,14 +22371,6 @@ parse_program(pm_parser_t *parser) {
     parser_lex(parser);
     pm_statements_node_t *statements = parse_statements(parser, PM_CONTEXT_MAIN, 0);
 
-    if (statements != NULL && !parser->parsing_eval) {
-        // If we have statements, then the top-level statement should be
-        // explicitly checked as well. We have to do this here because
-        // everywhere else we check all but the last statement.
-        assert(statements->body.size > 0);
-        pm_void_statement_check(parser, statements->body.nodes[statements->body.size - 1]);
-    }
-
     pm_constant_id_list_t locals;
     pm_locals_order(parser, &parser->current_scope->locals, &locals, true);
     pm_parser_scope_pop(parser);
