@@ -60,6 +60,7 @@ errors:
   - CONDITIONAL_WHILE_PREDICATE
   - CONSTANT_PATH_COLON_COLON_CONSTANT
   - DEF_ENDLESS
+  - DEF_ENDLESS_PARAMETERS
   - DEF_ENDLESS_SETTER
   - DEF_NAME
   - DEF_PARAMS_TERM
@@ -101,6 +102,8 @@ errors:
   - EXPECT_FOR_DELIMITER
   - EXPECT_IDENT_REQ_PARAMETER
   - EXPECT_IN_DELIMITER
+  - EXPECT_LPAREN_AFTER_NOT_LPAREN
+  - EXPECT_LPAREN_AFTER_NOT_OTHER
   - EXPECT_LPAREN_REQ_PARAMETER
   - EXPECT_MESSAGE
   - EXPECT_RBRACKET
@@ -216,6 +219,7 @@ errors:
   - PARAMETER_WILD_LOOSE_COMMA
   - PATTERN_ARRAY_MULTIPLE_RESTS
   - PATTERN_CAPTURE_DUPLICATE
+  - PATTERN_CAPTURE_IN_ALTERNATIVE
   - PATTERN_EXPRESSION_AFTER_BRACKET
   - PATTERN_EXPRESSION_AFTER_COMMA
   - PATTERN_EXPRESSION_AFTER_HROCKET
@@ -277,6 +281,7 @@ errors:
   - UNEXPECTED_INDEX_KEYWORDS
   - UNEXPECTED_LABEL
   - UNEXPECTED_MULTI_WRITE
+  - UNEXPECTED_PARAMETER_DEFAULT_VALUE
   - UNEXPECTED_RANGE_OPERATOR
   - UNEXPECTED_SAFE_NAVIGATION
   - UNEXPECTED_TOKEN_CLOSE_CONTEXT
@@ -353,6 +358,8 @@ tokens:
     comment: "a newline character outside of other tokens"
   - name: PARENTHESIS_RIGHT
     comment: ")"
+  - name: PIPE
+    comment: "|"
   - name: SEMICOLON
     comment: ";"
   # Tokens from here on are not used for lookup, and can be in any order.
@@ -586,8 +593,6 @@ tokens:
     comment: "%I"
   - name: PERCENT_UPPER_W
     comment: "%W"
-  - name: PIPE
-    comment: "|"
   - name: PIPE_EQUAL
     comment: "|="
   - name: PIPE_PIPE
@@ -990,8 +995,19 @@ nodes:
       - name: constant
         type: node?
         kind:
-          - ConstantReadNode
           - ConstantPathNode
+          - ConstantReadNode
+        comment: |
+          Represents the optional constant preceding the Array
+
+              foo in Bar[]
+                     ^^^
+
+              foo in Bar[1, 2, 3]
+                     ^^^
+
+              foo in Bar::Baz[1, 2, 3]
+                     ^^^^^^^^
       - name: requireds
         type: node[]
         kind: pattern expression
@@ -1501,6 +1517,16 @@ nodes:
 
               foo(bar)
                      ^
+      - name: equal_loc
+        type: location?
+        comment: |
+          Represents the location of the equal sign, in the case that this is an attribute write.
+
+              foo.bar = value
+                      ^
+
+              foo[bar] = value
+                       ^
       - name: block
         type: node?
         kind:
@@ -1787,7 +1813,7 @@ nodes:
           Represents the predicate of the case statement. This can be either `nil` or any [non-void expressions](https://github.com/ruby/prism/blob/main/docs/parsing_rules.md#non-void-expression).
 
               case true; when false; end
-              ^^^^
+                   ^^^^
       - name: conditions
         type: node[]
         kind: WhenNode
@@ -2407,23 +2433,68 @@ nodes:
       - name: constant
         type: node?
         kind:
-          - ConstantReadNode
           - ConstantPathNode
+          - ConstantReadNode
+        comment: |
+          Represents the optional constant preceding the pattern
+
+              foo in Foo(*bar, baz, *qux)
+                     ^^^
       - name: left
         type: node
         kind: SplatNode
+        comment: |
+          Represents the first wildcard node in the pattern.
+
+              foo in *bar, baz, *qux
+                     ^^^^
+
+              foo in Foo(*bar, baz, *qux)
+                         ^^^^
       - name: requireds
         type: node[]
         kind: pattern expression
+        comment: |
+          Represents the nodes in between the wildcards.
+
+              foo in *bar, baz, *qux
+                           ^^^
+
+              foo in Foo(*bar, baz, 1, *qux)
+                               ^^^^^^
       - name: right
         type: node
         kind:
           - SplatNode
           - on error: MissingNode
+        comment: |
+          Represents the second wildcard node in the pattern.
+
+              foo in *bar, baz, *qux
+                                ^^^^
+
+              foo in Foo(*bar, baz, *qux)
+                                    ^^^^
       - name: opening_loc
         type: location?
+        comment: |
+          The location of the opening brace.
+
+              foo in [*bar, baz, *qux]
+                     ^
+
+              foo in Foo(*bar, baz, *qux)
+                        ^
       - name: closing_loc
         type: location?
+        comment: |
+          The location of the closing brace.
+
+              foo in [*bar, baz, *qux]
+                                     ^
+
+              foo in Foo(*bar, baz, *qux)
+                                        ^
     comment: |
       Represents a find pattern in pattern matching.
 
@@ -2435,6 +2506,9 @@ nodes:
 
           foo in Foo(*bar, baz, *qux)
                  ^^^^^^^^^^^^^^^^^^^^
+
+          foo => *bar, baz, *qux
+                 ^^^^^^^^^^^^^^^
   - name: FlipFlopNode
     flags: RangeFlags
     fields:
@@ -2554,11 +2628,18 @@ nodes:
       - name: block
         type: node?
         kind: BlockNode
+        comment: |
+          All other arguments are forwarded as normal, except the original block is replaced with the new block.
     comment: |
-      Represents the use of the `super` keyword without parentheses or arguments.
+      Represents the use of the `super` keyword without parentheses or arguments, but which might have a block.
 
           super
           ^^^^^
+
+          super { 123 }
+          ^^^^^^^^^^^^^
+
+      If it has any other arguments, it would be a `SuperNode` instead.
   - name: GlobalVariableAndWriteNode
     fields:
       - name: name
@@ -2712,20 +2793,60 @@ nodes:
       - name: constant
         type: node?
         kind:
-          - ConstantReadNode
           - ConstantPathNode
+          - ConstantReadNode
+        comment: |
+          Represents the optional constant preceding the Hash.
+
+              foo => Bar[a: 1, b: 2]
+                   ^^^
+
+              foo => Bar::Baz[a: 1, b: 2]
+                   ^^^^^^^^
       - name: elements
         type: node[]
         kind: AssocNode
+        comment: |
+          Represents the explicit named hash keys and values.
+
+              foo => { a: 1, b:, ** }
+                       ^^^^^^^^
       - name: rest
         type: node?
         kind:
           - AssocSplatNode
           - NoKeywordsParameterNode
+        comment: |
+          Represents the rest of the Hash keys and values. This can be named, unnamed, or explicitly forbidden via `**nil`, this last one results in a `NoKeywordsParameterNode`.
+
+              foo => { a: 1, b:, **c }
+                                 ^^^
+
+              foo => { a: 1, b:, ** }
+                                 ^^
+
+              foo => { a: 1, b:, **nil }
+                                 ^^^^^
       - name: opening_loc
         type: location?
+        comment: |
+          The location of the opening brace.
+
+              foo => { a: 1 }
+                     ^
+
+              foo => Bar[a: 1]
+                        ^
       - name: closing_loc
         type: location?
+        comment: |
+          The location of the closing brace.
+
+              foo => { a: 1 }
+                            ^
+
+              foo => Bar[a: 1]
+                             ^
     comment: |
       Represents a hash pattern in pattern matching.
 
@@ -2734,6 +2855,12 @@ nodes:
 
           foo => { a: 1, b: 2, **c }
                  ^^^^^^^^^^^^^^^^^^^
+
+          foo => Bar[a: 1, b: 2]
+                 ^^^^^^^^^^^^^^^
+
+          foo in { a: 1, b: 2 }
+                 ^^^^^^^^^^^^^^
   - name: IfNode
     fields:
       - name: if_keyword_loc
@@ -3179,6 +3306,9 @@ nodes:
           - EmbeddedVariableNode
           - InterpolatedStringNode # `"a" "#{b}"`
           - on error: XStringNode # `<<`FOO` "bar"
+          - on error: InterpolatedXStringNode
+          - on error: SymbolNode
+          - on error: InterpolatedSymbolNode
       - name: closing_loc
         type: location?
     newline: parts
@@ -3386,6 +3516,9 @@ nodes:
 
           foo, bar = baz
           ^^^  ^^^
+
+          foo => baz
+                 ^^^
   - name: LocalVariableWriteNode
     fields:
       - name: name
@@ -3476,11 +3609,65 @@ nodes:
       - name: value
         type: node
         kind: non-void expression
+        comment: |
+          Represents the left-hand side of the operator.
+
+              foo => bar
+              ^^^
       - name: pattern
         type: node
         kind: pattern expression
+        comment: |
+          Represents the right-hand side of the operator. The type of the node depends on the expression.
+
+          Anything that looks like a local variable name (including `_`) will result in a `LocalVariableTargetNode`.
+
+              foo => a # This is equivalent to writing `a = foo`
+                     ^
+
+          Using an explicit `Array` or combining expressions with `,` will result in a `ArrayPatternNode`. This can be preceded by a constant.
+
+              foo => [a]
+                     ^^^
+
+              foo => a, b
+                     ^^^^
+
+              foo => Bar[a, b]
+                     ^^^^^^^^^
+
+          If the array pattern contains at least two wildcard matches, a `FindPatternNode` is created instead.
+
+              foo => *, 1, *a
+                     ^^^^^
+
+          Using an explicit `Hash` or a constant with square brackets and hash keys in the square brackets will result in a `HashPatternNode`.
+
+              foo => { a: 1, b: }
+
+              foo => Bar[a: 1, b:]
+
+              foo => Bar[**]
+
+          To use any variable that needs run time evaluation, pinning is required. This results in a `PinnedVariableNode`
+
+              foo => ^a
+                     ^^
+
+          Similar, any expression can be used with pinning. This results in a `PinnedExpressionNode`.
+
+              foo => ^(a + 1)
+
+          Anything else will result in the regular node for that expression, for example a `ConstantReadNode`.
+
+              foo => CONST
       - name: operator_loc
         type: location
+        comment: |
+          The location of the operator.
+
+              foo => bar
+                  ^^
     comment: |
       Represents the use of the `=>` operator.
 
@@ -3910,12 +4097,32 @@ nodes:
       - name: expression
         type: node
         kind: non-void expression
+        comment: |
+          The expression used in the pinned expression
+
+              foo in ^(bar)
+                       ^^^
       - name: operator_loc
         type: location
+        comment: |
+          The location of the `^` operator
+
+              foo in ^(bar)
+                     ^
       - name: lparen_loc
         type: location
+        comment: |
+          The location of the opening parenthesis.
+
+              foo in ^(bar)
+                      ^
       - name: rparen_loc
         type: location
+        comment: |
+          The location of the closing parenthesis.
+
+              foo in ^(bar)
+                          ^
     comment: |
       Represents the use of the `^` operator for pinning an expression in a pattern matching expression.
 
@@ -3934,8 +4141,18 @@ nodes:
           - NumberedReferenceReadNode # foo in ^$1
           - ItLocalVariableReadNode # proc { 1 in ^it }
           - on error: MissingNode # foo in ^Bar
+        comment: |
+          The variable used in the pinned expression
+
+              foo in ^bar
+                      ^^^
       - name: operator_loc
         type: location
+        comment: |
+          The location of the `^` operator
+
+              foo in ^bar
+                     ^
     comment: |
       Represents the use of the `^` operator for pinning a variable in a pattern matching expression.
 
@@ -4301,6 +4518,7 @@ nodes:
       - name: arguments
         type: node?
         kind: ArgumentsNode
+        comment: "Can be only `nil` when there are empty parentheses, like `super()`."
       - name: rparen_loc
         type: location?
       - name: block
@@ -4316,6 +4534,8 @@ nodes:
 
           super foo, bar
           ^^^^^^^^^^^^^^
+
+      If no arguments are provided (except for a block), it would be a `ForwardingSuperNode` instead.
   - name: SymbolNode
     flags: SymbolFlags
     fields:
